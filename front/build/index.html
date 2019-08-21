@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="fr">
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+		<meta http-equiv="Content-Language" content="fr"/>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+		<title>My safe trip</title>
+		
+		<link rel="stylesheet" href="base.css" />
+		<link rel="stylesheet" href="lib/leaflet/leaflet.css" />
+		<link rel="icon" href="img/favicon.png">
+
+		<script src="lib/leaflet/leaflet.js"></script>
+		<script src="js/main.js"></script>
+	</head>
+	<body>
+		<div id="wellcome-screen" class="screen">
+			<h1>My safe trip</h1>
+			<p>Tracked for safety</p>
+			<div id="public-track"></div>
+		</div>
+		<div id="start-screen">
+			<button id="btn-newtrip">Begin</button>
+				<div class="start-container">
+				<p>
+					<label for="in-name" class="form__label">Name</label>
+					<input type="text" id="in-name" class="form__text" placeholder="Mountain hike" />
+				</p>
+				<p>
+					<span class="form__label">Visibility</span>
+					<button id="btn-public" class="form__button--switch">public</button><!--
+					--><button id="btn-private" class="form__button--switch active">private</button>
+				</p>
+				<p>
+					<span class="form__label">Share it</span>
+					<input type="text" id="in-url-share" class="form__text form__text-small" readonly />
+					<button id="btn-share" class="form__button">✉</button>
+				</p>
+				<button id="btn-start">Start</button>
+			</div>
+		</div>
+		
+		<div id="map-screen" class="screen">
+		
+		</div>
+		
+		<button id="btn-stop">Stop</button>
+		<div id="loader">
+			<img src="img/loader.svg" alt="loading..." />
+		</div>
+	</body>
+</html>

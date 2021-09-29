@@ -1,27 +1,20 @@
-/*
- * Serveur safe trip
- *
- */
-var https = require('https');
-var fs = require('fs');
-var log4js = require('log4js');
-var NoSQL = require('nosql');
-var random = require('randomstring');
+const { v4: uuidv4 } = require('uuid');
+const http = require('http');
+const fs = require('fs');
+const log4js = require('log4js');
+const NoSQL = require('nosql');
 
-var privateKey = fs.readFileSync('./certs/privkey.pem');
-var certificate = fs.readFileSync('./certs/cert.pem');
-var port = 8081;
-//base de données contenant la liste des tracks
-var db_tracks = NoSQL.load('tracks.nosql');
-//base de données contenant chaque enregistrement
-var db_records = NoSQL.load('records.nosql');
+var _HttpPort = 80;
+var _DbDir = './data/db'
+var _TrackDbFile = `${_DbDir}/tracks.nosql`;
+var _RecordsDbFile = `${_DbDir}/records.nosql`;
+var _LogFile = './data/logs/safetrip.log';
 
-//contrôle des ips de provenance pour limiter les accès
-var acces_ips = [];
-//URL du domaine de base
-var origin = "https://******.fr";
-//Taille par défaut de l'id (64 max)
-var idLength = 5;
+log4js.configure({
+	appenders: { server: {type: 'file', filename: _LogFile} },
+	categories: {default: {appenders: ['server'], level: 'debug' } }
+});
+var _Logger = log4js.getLogger('server');
 
 var ROUTES = {
 	// GET /tracks => retourne l'ensemble des tracks public (limité au 20 derniers) avec leur id
@@ -38,35 +31,38 @@ var ROUTES = {
 	POST_RECORDS : /^POST \/records\/([A-Za-z0-9]+)\/([A-Za-z0-9]+)$/
 }
 
-var options = {
-  key: privateKey,
-  cert: certificate
-};
-log4js.configure({
-	appenders: { server: {type: 'file', filename: 'server.log'} },
-	categories: {default: {appenders: ['server'], level: 'debug' } }
-});
-var logger = log4js.getLogger('server');
+_Logger.info(`###### Server initialization on port : ${_HttpPort} #####`);
 
-logger.info('###### Initialisation du serveur #####');
-logger.info('###### Port : ',port);
-logger.info('###### Origin : ', origin);
+fs.mkdirSync(_DbDir, {recursive : true});
+// Tracks database
+if (!fs.existsSync(_TrackDbFile)) {
+	_Logger.info(`Creation of file ${_TrackDbFile}`);
+	fs.writeFileSync(_TrackDbFile, '{"uid":"", "date":0, "name":"","public":false, "editkey":""}\n');
+}
+var _DbTracks = NoSQL.load('tracks.nosql');
+// Records database
+if (!fs.existsSync(_RecordsDbFile)) {
+	_Logger.info(`Creation of file ${_RecordsDbFile}`);
+	fs.writeFileSync(_RecordsDbFile, '{"uid":"", "time":0,"latitude":0,"longitude":0}\n');
+}
+var _DbRecords = NoSQL.load('records.nosql');
+
 
 /* Router */
 function routeRequest(request, response, data, success) {
 	var url = request.url;
 	var method = request.method;
 	var route = method + ' ' + url;
-	logger.debug('[ROUTE] request ',method, url, data);
+	_Logger.debug('[ROUTE] request ',method, url, data);
 
 	if(route.match(ROUTES.GET_TRACKS)) {
 		//liste des tracks public
-		db_tracks.find().make(function(builder){
+		_DbTracks.find().make(function(builder){
 			builder.where('public',true);
-			builder.fields('id','name','date_creation');
+			builder.fields('uid','name','date');
 			builder.sort('date_creation','desc');
 			builder.callback(function(err,resp) {
-				logger.debug('[RESP] ', resp);
+				_Logger.debug('[RESP] ', resp);
 				success(200,{tracks:resp});
 			});
 		});
@@ -76,40 +72,40 @@ function routeRequest(request, response, data, success) {
 		var serverTS = new Date().getTime();
 		//décalage de date entre le serveur et le client
 		var decalTS = serverTS - ts;
-		logger.debug('[NEW_TRACK] ts, decal ',ts,decalTS);
+		_Logger.debug('[NEW_TRACK] ts, decal ',ts,decalTS);
 		var newTrack = {
-			id: random.generate(idLength),
+			uid: uuidv4(),
 			public: false,
-			date_creation: new Date().getTime(),
+			date: new Date().getTime(),
 			name: '',
-			editkey:random.generate(8),
+			editkey:uuidv4(),
 			decalTS: decalTS
 		}
-		db_tracks.insert(newTrack).callback(function(err) {
+		_DbTracks.insert(newTrack).callback(function(err) {
 			success(200,newTrack);
 		});
 	} else if(route.match(ROUTES.GET_TRACK)) {
 		//recupère l'ensemble d'un parcours
 		var param = ROUTES.GET_TRACK.exec(route);
 		var id = param[1];
-		db_tracks.find().make(function(btrack){
-			btrack.where('id', String(id));
-			btrack.fields('id','name','date_creation');
+		_DbTracks.find().make(function(btrack){
+			btrack.where('uid', String(id));
+			btrack.fields('uid','name','date');
 			btrack.first();
 			btrack.callback(function(errt,respt) {
 				if(respt) {
-					db_records.find().make(function(brecords){ 
-						brecords.where('id',String(id));
+					_DbRecords.find().make(function(brecords){ 
+						brecords.where('uid',String(id));
 						brecords.sort('time','asc');
 						brecords.fields('time','latitude','longitude');
 						brecords.callback(function(errr,respr) {
 							respt.records = respr;
-							logger.debug('[GET_TRACK] ', respt);
+							_Logger.debug('[GET_TRACK] ', respt);
 							success(200,{respt});
 						});
 					});
 				} else {
-					logger.debug('[GET_TRACK] track not found');
+					_Logger.debug('[GET_TRACK] track not found');
 					success(200,{error: 'track not found'});
 				}
 			});
@@ -118,21 +114,21 @@ function routeRequest(request, response, data, success) {
 	} else if(route.match(ROUTES.POST_TRACK)) {
 		if(data) {
 			//Cherche l'élément par son id avec le code d'édition
-			db_tracks.find().make(function(btrack){
-				btrack.where('id', String(data.id));
+			_DbTracks.find().make(function(btrack){
+				btrack.where('uid', String(data.id));
 				btrack.where('editkey', String(data.editkey));
 				btrack.first();
 				btrack.callback(function(errt,respt) {
 					if(respt) {
-						logger.debug('[POST_TRACK] success find');
+						_Logger.debug('[POST_TRACK] success find');
 						//Met à jour l'élément
 						respt.name = data.name;
 						respt.public = data.public;
-						db_tracks.update(respt).make(function(upbuil) {
-							upbuil.where('id', String(data.id));
+						_DbTracks.update(respt).make(function(upbuil) {
+							upbuil.where('uid', String(data.id));
 							upbuil.where('editkey', String(data.editkey));
 							upbuil.callback(function(err, count) {
-								logger.debug('[POST_TRACK] success update');
+								_Logger.debug('[POST_TRACK] success update');
 								success(201,respt);
 							});
 						});
@@ -145,15 +141,15 @@ function routeRequest(request, response, data, success) {
 		var param = ROUTES.GET_RECORDS.exec(route);
 		var id = param[1];
 		var ts = param[2];
-		logger.debug('get record for ',id,ts);
+		_Logger.debug('get record for ',id,ts);
 		
-		db_records.find().make(function(brecords){ 
-			brecords.where('id',String(id));
+		_DbRecords.find().make(function(brecords){ 
+			brecords.where('uid',String(id));
 			brecords.where('time', '>', Number(ts));
 			brecords.sort('time','asc');
-			brecords.fields('id','time','latitude','longitude');
+			brecords.fields('uid','time','latitude','longitude');
 			brecords.callback(function(errr,respr) {
-				logger.debug('[GET_RECORDS] ', respr);
+				_Logger.debug('[GET_RECORDS] ', respr);
 				success(200,{records : respr});
 			});
 		});
@@ -165,29 +161,29 @@ function routeRequest(request, response, data, success) {
 		
 		if(data) {
 			//Cherche l'élément par son id avec le code d'édition
-			db_tracks.find().make(function(btrack){
-				btrack.where('id', String(id));
+			_DbTracks.find().make(function(btrack){
+				btrack.where('uid', String(id));
 				btrack.where('editkey', String(editkey));
 				btrack.first();
 				btrack.callback(function(errt,respt) {
 					if(respt) {
-						logger.debug('[POST_RECORDS] track :', respt);
+						_Logger.debug('[POST_RECORDS] track :', respt);
 						//Autorisé à ajouter des records
 						data.records.forEach(function(record) {
-							var newRecord = {id:id, time:record.time + respt.decalTS, latitude:record.latitude, longitude:record.longitude}
-							db_records.insert(newRecord).callback(function(err) {
-								logger.debug('[POST_RECORDS] insert record :', newRecord);
+							var newRecord = {id:uid, time:record.time + respt.decalTS, latitude:record.latitude, longitude:record.longitude}
+							_DbRecords.insert(newRecord).callback(function(err) {
+								_Logger.debug('[POST_RECORDS] insert record :', newRecord);
 							});
 						});
 						success(201,data);
 					} else {
-						logger.debug('[POST_RECORDS] erreur acces');
+						_Logger.debug('[POST_RECORDS] erreur acces');
 						success(403,{});
 					}
 				});
 			});
 		} else {
-			logger.debug('[POST_RECORDS] erreur pas de donnée');
+			_Logger.debug('[POST_RECORDS] erreur pas de donnée');
 			success(404,{});
 		}
 	} else {
@@ -195,38 +191,25 @@ function routeRequest(request, response, data, success) {
 	}
 }
 
-https.createServer(options,function (request, response) {
-	var ip = request.connection.remoteAddress;
-	logger.info("[ACCES] receive request from ", request.method, request.connection.remoteAddress, request.url);
-	var now = new Date().getTime();
-	var lastAcces = 0;
-	if(acces_ips[ip]) {
-		lastAcces = acces_ips[ip];
-	}
-	acces_ips[ip] = now;
-	logger.debug('[ACCES] time since last acces : ',now - lastAcces);
+http.createServer({},function (request, response) {
+	_Logger.info("[ACCES] receive request from ", request.method, request.connection.remoteAddress, request.connection.remoteAddress, request.url);
 
-	if(now - lastAcces < 100) {
-		logger.info('[ACCES] block ' + ip + ' : last acces to recent.');
-		response.end('');
-	} else {
-		var body = "";
-		request.addListener('data', function (chunk) { 
-			body += chunk
-		});
-		request.addListener('end', function () {
-			var jsonBody = {};
-			if(body != '') {
-				jsonBody = JSON.parse(body);
-			}
+	var body = "";
+	request.addListener('data', function (chunk) { 
+		body += chunk
+	});
+	request.addListener('end', function () {
+		var jsonBody = {};
+		if(body != '') {
+			jsonBody = JSON.parse(body);
+		}
 
-			routeRequest(request, response, jsonBody, function(status, data) {
-				response.setHeader('Access-Control-Allow-Origin', origin);
-				response.setHeader('Content-Type','application/json');
-		        response.writeHead(status, request.headers);
-		        response.end(JSON.stringify(data));
-			});
+		routeRequest(request, response, jsonBody, function(status, data) {
+			response.setHeader('Access-Control-Allow-Origin', "*");
+			response.setHeader('Content-Type','application/json');
+			response.writeHead(status, request.headers);
+			response.end(JSON.stringify(data));
 		});
-	}
-}).listen(port);
+	});
+}).listen(_HttpPort);
 

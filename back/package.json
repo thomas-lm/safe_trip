@@ -1,0 +1,25 @@
+{
+  "name": "thomaslm.safetrip.api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "Server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thomas-lm/safe_trip.git"
+  },
+  "author": "thomas-lm",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/thomas-lm/safe_trip/issues"
+  },
+  "homepage": "https://github.com/thomas-lm/safe_trip#readme",
+  "dependencies": {
+    "log4js": "^6.3.0",
+    "nosql": "^6.1.0",
+    "uuid": "^8.3.2"
+  }
+}
